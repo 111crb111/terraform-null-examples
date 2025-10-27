@@ -1,3 +1,8 @@
+# ============================================================================
+# Terraform Null Resource Examples Module
+# A comprehensive module demonstrating various null_resource patterns
+# ============================================================================
+
 terraform {
   required_version = ">= 1.0"
   required_providers {
@@ -8,23 +13,21 @@ terraform {
   }
 }
 
-# Variables
-variable "timestamp" {
-  description = "Timestamp to trigger resource recreation"
-  type        = string
-  default     = ""
-}
+# ============================================================================
+# VARIABLES
+# ============================================================================
 
 variable "environment" {
-  description = "Environment name"
+  description = "Environment name (dev, staging, prod)"
   type        = string
   default     = "dev"
 }
 
-variable "script_path" {
-  description = "Path to script to execute"
-  type        = string
-  default     = ""
+# Command Executor Variables
+variable "enable_command_executor" {
+  description = "Enable command executor pattern"
+  type        = bool
+  default     = true
 }
 
 variable "commands" {
@@ -33,91 +36,166 @@ variable "commands" {
   default     = ["echo 'Hello from Terraform'"]
 }
 
-# Null resource with local-exec provisioner
-resource "null_resource" "local_exec_example" {
+variable "working_dir" {
+  description = "Working directory for command execution"
+  type        = string
+  default     = ""
+}
+
+variable "env_vars" {
+  description = "Environment variables for command execution"
+  type        = map(string)
+  default     = {}
+}
+
+# Script Runner Variables
+variable "enable_script_runner" {
+  description = "Enable script runner pattern"
+  type        = bool
+  default     = false
+}
+
+variable "script_path" {
+  description = "Path to script file to execute"
+  type        = string
+  default     = ""
+}
+
+variable "script_args" {
+  description = "Arguments to pass to the script"
+  type        = string
+  default     = ""
+}
+
+# Trigger Variables
+variable "enable_always_run" {
+  description = "Enable always-run trigger (runs on every apply)"
+  type        = bool
+  default     = false
+}
+
+variable "trigger_on_change" {
+  description = "Value that triggers re-execution when changed"
+  type        = string
+  default     = ""
+}
+
+# Destroy Provisioner Variables
+variable "enable_destroy_provisioner" {
+  description = "Enable destroy-time provisioner"
+  type        = bool
+  default     = false
+}
+
+variable "destroy_commands" {
+  description = "Commands to run on resource destruction"
+  type        = list(string)
+  default     = ["echo 'Cleaning up...'"]
+}
+
+# ============================================================================
+# NULL RESOURCES
+# ============================================================================
+
+# Pattern 1: Command Executor with Environment Variables
+resource "null_resource" "command_executor" {
+  count = var.enable_command_executor ? 1 : 0
+
+  triggers = merge(
+    {
+      environment = var.environment
+      commands    = join(",", var.commands)
+    },
+    var.enable_always_run ? { always_run = timestamp() } : {},
+    var.trigger_on_change != "" ? { trigger = var.trigger_on_change } : {}
+  )
+
+  provisioner "local-exec" {
+    command     = join(" && ", var.commands)
+    working_dir = var.working_dir != "" ? var.working_dir : null
+    environment = merge(
+      { ENVIRONMENT = var.environment },
+      var.env_vars
+    )
+  }
+}
+
+# Pattern 2: Script Runner with File Hash Trigger
+resource "null_resource" "script_runner" {
+  count = var.enable_script_runner && var.script_path != "" ? 1 : 0
+
   triggers = {
-    always_run = timestamp()
+    script_hash = fileexists(var.script_path) ? filemd5(var.script_path) : ""
+    script_args = var.script_args
+  }
+
+  provisioner "local-exec" {
+    command = "${var.script_path} ${var.script_args}"
+  }
+}
+
+# Pattern 3: Destroy-Time Provisioner
+resource "null_resource" "destroy_provisioner" {
+  count = var.enable_destroy_provisioner ? 1 : 0
+
+  triggers = {
     environment = var.environment
   }
 
   provisioner "local-exec" {
-    command = "echo 'Running local command for ${var.environment} environment'"
-  }
-
-  provisioner "local-exec" {
-    command = join(" && ", var.commands)
-  }
-}
-
-# Null resource that runs on specific changes
-resource "null_resource" "conditional_trigger" {
-  triggers = {
-    timestamp = var.timestamp
-  }
-
-  provisioner "local-exec" {
-    command = "echo 'Triggered at: ${var.timestamp}'"
-  }
-}
-
-# Null resource with script execution
-resource "null_resource" "script_runner" {
-  count = var.script_path != "" ? 1 : 0
-
-  triggers = {
-    script_hash = filemd5(var.script_path)
-  }
-
-  provisioner "local-exec" {
-    command = "bash ${var.script_path}"
-  }
-
-  provisioner "local-exec" {
     when    = destroy
-    command = "echo 'Cleanup: Resource is being destroyed'"
+    command = join(" && ", var.destroy_commands)
   }
 }
 
-# Null resource with dependencies
-resource "null_resource" "depends_on_example" {
-  depends_on = [null_resource.local_exec_example]
+# Pattern 4: Dependency Orchestrator
+resource "null_resource" "orchestrator" {
+  depends_on = [
+    null_resource.command_executor,
+    null_resource.script_runner
+  ]
+
+  triggers = {
+    timestamp = var.enable_always_run ? timestamp() : ""
+  }
 
   provisioner "local-exec" {
-    command = "echo 'This runs after local_exec_example completes'"
+    command = "echo 'All dependent resources completed for ${var.environment}'"
   }
 }
 
-# Null resource with working directory
-resource "null_resource" "with_working_dir" {
-  provisioner "local-exec" {
-    command     = "pwd && ls -la"
-    working_dir = path.module
+# ============================================================================
+# OUTPUTS
+# ============================================================================
+
+output "command_executor_id" {
+  description = "ID of the command executor resource"
+  value       = var.enable_command_executor ? null_resource.command_executor[0].id : null
+}
+
+output "script_runner_id" {
+  description = "ID of the script runner resource"
+  value       = var.enable_script_runner && var.script_path != "" ? null_resource.script_runner[0].id : null
+}
+
+output "destroy_provisioner_id" {
+  description = "ID of the destroy provisioner resource"
+  value       = var.enable_destroy_provisioner ? null_resource.destroy_provisioner[0].id : null
+}
+
+output "orchestrator_id" {
+  description = "ID of the orchestrator resource"
+  value       = null_resource.orchestrator.id
+}
+
+output "execution_summary" {
+  description = "Summary of module execution"
+  value = {
+    environment              = var.environment
+    command_executor_enabled = var.enable_command_executor
+    script_runner_enabled    = var.enable_script_runner && var.script_path != ""
+    destroy_provisioner_enabled = var.enable_destroy_provisioner
+    always_run_enabled       = var.enable_always_run
+    timestamp                = timestamp()
   }
-}
-
-# Null resource with environment variables
-resource "null_resource" "with_env_vars" {
-  provisioner "local-exec" {
-    command = "echo Environment: $ENV_NAME, Region: $REGION"
-    environment = {
-      ENV_NAME = var.environment
-      REGION   = "us-east-1"
-    }
-  }
-}
-
-# Outputs
-output "execution_id" {
-  description = "ID of the main null resource"
-  value       = null_resource.local_exec_example.id
-}
-
-output "trigger_timestamp" {
-  description = "Timestamp that triggered execution"
-  value       = null_resource.local_exec_example.triggers.always_run
-}
-
-output "script_runner_ids" {
-  description = "IDs of script runner resources"
-  value       = null_resource.script_runner[*].id
 }
