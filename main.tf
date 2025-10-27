@@ -139,12 +139,13 @@ resource "null_resource" "destroy_provisioner" {
   count = var.enable_destroy_provisioner ? 1 : 0
 
   triggers = {
-    environment = var.environment
+    environment      = var.environment
+    destroy_commands = join(" && ", var.destroy_commands)
   }
 
   provisioner "local-exec" {
     when    = destroy
-    command = join(" && ", var.destroy_commands)
+    command = self.triggers.destroy_commands
   }
 }
 
